@@ -161,3 +161,9 @@ cython_debug/
 
 .ruff_cache/
 *.zip
+
+# 数据和生成物（不提交）
+data/
+prof.out
+test.txt
+*.npy
