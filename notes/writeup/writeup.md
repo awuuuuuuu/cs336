@@ -47,10 +47,10 @@ date: "2026-11-04"
 > 答：Unicode 字符 U+0000（NULL，空字符），通常表示为 \x00
 
 **(b)** 其 `__repr__()` 与打印表示有何不同？
-> 答：`__repr__()` 返回的是对应的 可见的转义序列  \x00
+> 答：`__repr__()` 显示为可见的转义序列 `'\x00'`；`print` 出来则是空的（NULL 是不可见的控制字符，没有字形）。
 
 **(c)** 该字符出现在文本中会发生什么？
-> 答：按理说这个符号是文档结束的标记，在C语言中字符串输出到这里就会停止，但是在py中并没有停止
+> 答：NUL 打印时不可见，所以 `"this is a test" + chr(0) + "string"` 的 repr 是 `'this is a test\x00string'`，但 print 出来是 `this is a teststring`——两个词看起来像被拼接了，可字节 0 实际仍在字符串里。
 >
 
 ## 2.2 Unicode Encodings
@@ -61,11 +61,11 @@ date: "2026-11-04"
 > 答：英文和代码的存储效率更高,避免大量零字节,与现有文本生态兼容
 
 **(b)** `decode_utf8_bytes_to_str_wrong` 错在哪里？给出一个错误输入。
-> 错误输入：`b'...'`（必须写成可复现的字面量）
-> 原因：因为uft-8编码不是每个词对应一个token，这个函数对逐字节解码会遇到错误；比如说 “你好”
+> 错误输入：`"你好".encode("utf-8")` = `b'\xe4\xbd\xa0\xe5\xa5\xbd'`
+> 原因：UTF-8 是变长编码，一个字符可能占 2–4 个字节。该函数逐个字节 `decode("utf-8")`，会把多字节字符拆开；单个字节 `\xe4`（前导字节）无法单独解码成合法字符，从而报错。
 
 **(c)** 给出一个无法解码为任何 Unicode 字符的两字节序列。
-> 示例：\xff\xff
+> 示例：`b'\xff\xff'`（0xFF 不是合法的 UTF-8 字节，无法解码）
 
 ## 2.3 Subword Tokenization
 
@@ -80,15 +80,15 @@ date: "2026-11-04"
 ### train_bpe — BPE Tokenizer Training（15 分）[代码]
 
 测试：`uv run pytest tests/test_train_bpe.py`
-> 结果：（通过 / 未通过，耗时）
+> 结果：3 passed（test_train_bpe / test_train_bpe_speed / test_train_bpe_special_tokens）
 
 ### train_bpe_tinystories — BPE on TinyStories（2 分）[实验 + 书面]
 
 **(a)** 训练耗时与内存？词表中最长的 token？是否合理？
-> 答：（一到两句话 + 关键数字：训练时间、峰值内存、最长 token 及其字节内容）
+> 答：训练耗时约 79.8s，峰值内存约 385 MB（并行预分词 + 增量合并 + 堆优化）。词表中最长 token 是 `' accomplishment'`（15 字节，带前导空格），合理——BPE 会把高频完整词收进词表。
 
 **(b)** Profiling：训练中最耗时的部分？
-> 答：（一到两句话，附 profiler 结论）
+> 答：优化前瓶颈是 `max(pair_counts)` 全表扫描（约 1.96 亿次 key 调用）；改用堆后瓶颈变为预分词；并行预分词后，剩余瓶颈是单线程的合并循环（BPE 合并无法并行化）。
 >
 > 图（可选）：![](./figs/bpe_profile.png){width=70%}
 
@@ -105,23 +105,23 @@ date: "2026-11-04"
 ### tokenizer — Implementing the Tokenizer（15 分）[代码]
 
 测试：`uv run pytest tests/test_tokenizer.py`
-> 结果：
+> 结果：23 passed, 2 skipped（2 个内存测试因 macOS 不支持 rlimit 而跳过）
 
 ## 2.7 Experiments
 
 ### tokenizer_experiments（4 分）[实验 + 书面]
 
 **(a)** 各分词器的压缩率（bytes/token）？
-> 答：（TS-10K: ___ ；OWT-32K: ___，一到两句话）
+> 答：（TS-10K: 4.11 ；OWT-32K: ___，一到两句话）
 
 **(b)** 用 TinyStories 分词器编码 OWT 样本会怎样？
-> 答：（一到两句话，含压缩率对比）
+> 答：压缩率会下降（bytes/token 变小）。因为 TinyStories 词表是在儿童故事上训练的，词汇覆盖窄；而 OpenWebText 是成人网页文本（词汇更丰富，含技术词、代码、专有名词等），大量词不在 TinyStories 词表里，分词器只能把它们拆成更小的子词甚至单个字节，导致 token 数变多、压缩率变低。
 
 **(c)** 吞吐量（bytes/s）？分词 Pile（825GB）需多久？
-> 答：（一到两句话，含实测吞吐量与推算时长）
+> 答：吞吐约 1.6 MB/s。Pile 825GB = 8.25×10¹¹ 字节，需 8.25×10¹¹ / 1.6×10⁶ ≈ 147 小时。
 
 **(d)** 为什么用 `uint16`？
-> 答：（一到两句话）
+> 答：因为词表大小 10000 < 65536 = 2¹⁶，token ID 能装进 uint16（范围 0–65535）；uint8（0–255）太小装不下，uint32（4 字节）则浪费一倍内存。所以 uint16（2 字节）是「刚好装得下、又最省内存」的选择
 
 ---
 

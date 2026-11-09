@@ -7,12 +7,12 @@ OpenWebText 数据不含 <|endoftext|>，所以 special_tokens 传空列表。
     uv run python scripts/train_owt.py
     nohup uv run python scripts/train_owt.py > data/owt_train.log 2>&1 &
 """
-import json
 import resource
 import sys
 import time
 
 from cs336_basics.bpe import train_bpe
+from serialize import save_vocab, save_merges
 
 INPUT_PATH = "data/owt_train.txt"
 VOCAB_SIZE = 32_000
@@ -21,16 +21,6 @@ NUM_PROCESSES = 8
 PROGRESS_INTERVAL = 1000   # 每合并 1000 次打印一次进度
 VOCAB_OUT = "data/owt_vocab.json"
 MERGES_OUT = "data/owt_merges.json"
-
-
-def save_vocab(vocab: dict[int, bytes], path: str) -> None:
-    with open(path, "w") as f:
-        json.dump({str(i): list(b) for i, b in vocab.items()}, f)
-
-
-def save_merges(merges: list[tuple[bytes, bytes]], path: str) -> None:
-    with open(path, "w") as f:
-        json.dump([[list(a), list(b)] for a, b in merges], f)
 
 
 def peak_memory_mb() -> float:

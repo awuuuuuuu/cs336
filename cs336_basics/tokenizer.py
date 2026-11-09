@@ -1,6 +1,7 @@
 from typing import Iterable, Iterator
-from .bpe import PAT
 import regex as re
+
+from .bpe import special_token_pattern, iter_pretokens
 
 
 class Tokenizer:
@@ -12,17 +13,14 @@ class Tokenizer:
     ) -> None:
         self.vocab = vocab
         self.merges = merges
-        self.rindex = {v: k for k, v in vocab.items()}
+        self.token_to_id = {v: k for k, v in vocab.items()}
         self.special_tokens = special_tokens or []
 
         self.merge_map = {(a, b): i for i, (a, b) in enumerate(merges)}
 
     def encode(self, text: str) -> list[int]:
         # 1. 预分词
-        sep = "|".join(
-            re.escape(t) 
-            for t in sorted(self.special_tokens, key=len, reverse=True)
-        )
+        sep = special_token_pattern(self.special_tokens)
         if self.special_tokens:
             parts = re.split(f"({sep})", text)
         else:
@@ -32,11 +30,9 @@ class Tokenizer:
         # 2. 合并
         for part in parts:
             if part in self.special_tokens:
-                tokens.append(self.rindex[part.encode("utf-8")])
+                tokens.append(self.token_to_id[part.encode("utf-8")])
             else:
-                for chunk in re.finditer(PAT, part):
-                    bytes1 =  chunk.group().encode("utf-8")
-                    raw = tuple(bytes([b]) for b in bytes1)
+                for raw in iter_pretokens(part):
                     word = list(raw)
                     INF = float("inf")
                     while len(word) > 1:
@@ -49,7 +45,7 @@ class Tokenizer:
                         word[i] = word[i] + word[i + 1]
                         del word[i + 1]
                     for token_bytes in word:
-                        tokens.append(self.rindex[token_bytes])
+                        tokens.append(self.token_to_id[token_bytes])
                     
         return tokens
 

@@ -2,11 +2,11 @@
 
 用法：uv run python train_tinystories.py
 """
-import json
 import resource
 import time
 
 from cs336_basics.bpe import train_bpe
+from serialize import save_vocab, save_merges
 
 INPUT_PATH = "data/TinyStoriesV2-GPT4-train.txt"
 VOCAB_SIZE = 10_000
@@ -14,18 +14,6 @@ SPECIAL_TOKENS = ["<|endoftext|>"]
 NUM_PROCESSES = 8
 VOCAB_OUT = "data/tinystories_vocab.json"
 MERGES_OUT = "data/tinystories_merges.json"
-
-
-def save_vocab(vocab: dict[int, bytes], path: str) -> None:
-    """dict[int, bytes] -> {str(id): [int, ...]}"""
-    with open(path, "w") as f:
-        json.dump({str(i): list(b) for i, b in vocab.items()}, f)
-
-
-def save_merges(merges: list[tuple[bytes, bytes]], path: str) -> None:
-    """list[tuple[bytes, bytes]] -> [[[int, ...], [int, ...]], ...]"""
-    with open(path, "w") as f:
-        json.dump([[list(a), list(b)] for a, b in merges], f)
 
 
 def main() -> None:

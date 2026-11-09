@@ -4,8 +4,38 @@ import time
 
 import regex as re
 from collections import Counter, defaultdict
+from typing import Iterator
 
 from cs336_basics.pretokenization_example import find_chunk_boundaries
+
+PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
+
+
+def special_token_pattern(special_tokens: list[str]) -> str:
+    """构建「匹配任一特殊 token」的正则（最长优先，用于正确处理重叠 token）。"""
+    return "|".join(re.escape(t) for t in sorted(special_tokens, key=len, reverse=True))
+
+
+def iter_pretokens(text: str) -> Iterator[tuple[bytes, ...]]:
+    """对一段（不含特殊 token 的）文本做正则预分词，逐条产出单字节元组。"""
+    for chunk in re.finditer(PAT, text):
+        yield tuple(bytes([b]) for b in chunk.group().encode("utf-8"))
+
+
+def pretokenize(
+    text: str,
+    special_tokens: list[str],
+) -> dict[tuple[bytes, ...], int]:
+    """按特殊 token 切分（硬边界）后预分词，返回词频字典。"""
+    counter = Counter()
+    if special_tokens:
+        parts = re.split(special_token_pattern(special_tokens), text)
+    else:
+        parts = [text]
+    for part in parts:
+        for token in iter_pretokens(part):
+            counter[token] += 1
+    return dict(counter)
 
 
 def _pretokenize_file_chunk(
@@ -23,7 +53,7 @@ def _pretokenize_file_chunk(
 def pretokenize_file(
     input_path: str,
     special_tokens: list[str],
-    num_processes: int = 8
+    num_processes: int = 1,
 ) -> dict[tuple[bytes, ...], int]:
     with open(input_path, "rb") as f:
         if special_tokens:
@@ -54,37 +84,9 @@ def pretokenize_file(
     return dict(counts)
 
 
-PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
-
-def pretokenize(
-    text: str,
-    special_tokens: list[str]
-) -> dict[tuple[bytes, ...], int]:
-    """
-    预分词，返回词频字典
-    """
-    counter = Counter()
-
-    if special_tokens:
-        # 将特殊token从文本中分离出来
-        sep= "|".join(
-            re.escape(t) 
-            for t in sorted(special_tokens, key=len, reverse=True)
-        )
-        parts = re.split(sep, text)
-    else:
-        parts = [text]
-
-    for part in parts:
-        for chunk in re.finditer(PAT, part):
-            bytes1 =  chunk.group().encode("utf-8")
-            token = tuple(bytes([b]) for b in bytes1)
-            counter[token] += 1
-    return dict(counter)
-
-def merge_pair(
+def _merge_pair(
     word: tuple[bytes, ...],
-    pair: tuple[bytes, bytes]
+    pair: tuple[bytes, bytes],
 ) -> tuple[bytes, ...]:
     result = []
     i = 0
@@ -97,7 +99,7 @@ def merge_pair(
             i += 1
     return tuple(result)
 
-def get_pairs(
+def _get_pairs(
     word: list[bytes]
 ):
     c = Counter()
@@ -105,8 +107,9 @@ def get_pairs(
         c[(a, b)] += 1
     return c
 
-def negate(bs):
+def _reverse_key(bs):
     return tuple(255 - b for b in bs) + (256,)
+
 
 def train_bpe(
     input_path: str,
@@ -118,7 +121,7 @@ def train_bpe(
 ) -> tuple[dict[int, bytes], list[tuple[bytes, bytes]]]:
     # 1. 读文件 + 2. 预分词
     words = pretokenize_file(input_path, special_tokens, num_processes)
-    
+
     word_list = [list(w) for w in words]
     word_counts = list(words.values())
 
@@ -131,16 +134,16 @@ def train_bpe(
 
     heap = []
     for (a, b), cnt in pair_counts.items():
-        heapq.heappush(heap, (-cnt, negate(a), negate(b), a, b))
+        heapq.heappush(heap, (-cnt, _reverse_key(a), _reverse_key(b), a, b))
 
     # 3. 初始化词表
-    vocab = {i : bytes([i]) for i in range(256)}
+    vocab = {i: bytes([i]) for i in range(256)}
 
     for token in special_tokens:
         token_bytes = token.encode("utf-8")
         vocab[len(vocab)] = token_bytes
 
-    #4. 合并
+    # 4. 合并
     merges = []
     num_merges = vocab_size - len(vocab)
     start_time = time.time()
@@ -155,18 +158,18 @@ def train_bpe(
             word = word_list[idx]
             cnt = word_counts[idx]
 
-            old = get_pairs(word)
-            new_word = merge_pair(word, pair)
-            new = get_pairs(new_word)
+            old = _get_pairs(word)
+            new_word = _merge_pair(word, pair)
+            new = _get_pairs(new_word)
             
             for p, c in old.items():                    # 旧 pair 消失
                 pair_counts[p] -= c * cnt
                 pair_to_words[p].discard(idx)
-                heapq.heappush(heap, (-pair_counts[p], negate(p[0]), negate(p[1]), p[0], p[1]))
+                heapq.heappush(heap, (-pair_counts[p], _reverse_key(p[0]), _reverse_key(p[1]), p[0], p[1]))
             for p, c in new.items():                    # 新 pair 出现
                 pair_counts[p] += c * cnt
                 pair_to_words[p].add(idx)
-                heapq.heappush(heap, (-pair_counts[p], negate(p[0]), negate(p[1]), p[0], p[1]))
+                heapq.heappush(heap, (-pair_counts[p], _reverse_key(p[0]), _reverse_key(p[1]), p[0], p[1]))
             
             word_list[idx] = list(new_word)
         merges.append(pair)
@@ -181,9 +184,3 @@ def train_bpe(
             )
 
     return vocab, merges
-
-
-    
-
-
-
