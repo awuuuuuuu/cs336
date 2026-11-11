@@ -238,23 +238,56 @@ lr = 1e1 / 1e2 / 1e3，跑 10 步的 loss 行为？
 ### adamw_accounting（2 分）[书面]
 
 **(a)** 峰值内存分解（parameters / activations / gradients / optimizer state）。
-> 参数：
-> 激活：
-> 梯度：
-> 优化器状态：
-> 总计：
->
-> 推导说明：（必要时 1–2 段）
+
+(a) 运行 AdamW 需要多少峰值内存？请按参数、激活值、梯度与优化器状态的内存占用分别拆解你的答案。用 `batch_size` 与模型超参数（`vocab_size`、`context_length`、`num_layers`、`d_model`、`num_heads`）表示你的答案。假设 $d_{ff} = \frac{8}{3} \times d_{model}$。
+记 batch=B, context_length=L, d_model=d, d_ff=f, vocab_size=v, num_heads=h, num_layers=N，且 f = 8/3·d。
+
+**参数 P**（元素数）：
+1. embedding: v·d
+2. 每层 TransformerBlock（×N）：
+   - RMSNorm ×2: 2d
+   - QKV 投影: 3d²
+   - 输出投影: d²
+   - FFN W1/W2/W3: 3d·f
+3. ln_final: d
+4. lm_head: d·v
+→ P = 2vd + N·(4d² + 3df + 2d) + d
+
+**梯度** = P
+
+**优化器状态** = 2P（一阶矩 m + 二阶矩 v，各与参数同形）
+
+**激活值**（元素数）：
+每层 TransformerBlock：
+- RMSNorm ×2: 2BLd
+- QKV 投影: 3BLd
+- QK^T: BhL²
+- softmax: BhL²
+- attn@V: BLd
+- 输出投影: BLd
+- W1 / SiLU / W3 / 逐元素乘积: 4BLf
+- W2: BLd
+→ 每层 = 8BLd + 4BLf + 2BhL²
+
+末尾：ln_final = BLd；lm_head logits = BLv
+→ 总激活 = N·(8BLd + 4BLf + 2BhL²) + BLd + BLv
+
+**总计（float32，4 字节/元素）**：
+= 4·(P + P + 2P + 总激活)
+= 4·[ 4P + N·(8BLd + 4BLf + 2BhL²) + BLd + BLv ]
+
 
 **(b)** GPT-2 XL 下化为 `a·batch_size + b`，80GB 内最大 batch size？
-> 表达式：___ · batch_size + ___
-> 最大 batch size：___
+> 固定部分（参数+梯度+优化器状态）= 4P = 4 × 1,640,452,800 × 4 字节 = 26,247,244,800 字节。
+> 激活值 = 4 × [48 × (8·1024·1600 + 4·1024·4288 + 2·25·1024²) + 1024·1600 + 1024·50257] × batch_size = 16,167,538,688 × batch_size 字节。
+> 表达式：**16,167,538,688 · batch_size + 26,247,244,800**（字节）。
+> 80GB = 8×10¹⁰ 字节 → batch_size ≤ (8×10¹⁰ − 26,247,244,800) / 16,167,538,688 ≈ 3.32，故最大 batch size = **3**。
 
 **(c)** AdamW 单步 FLOPs？
-> 答：（表达式 + 一句理由）
+> 每个参数元素约 12 FLOPs：m 更新约 3（2 乘 1 加）+ v 更新约 4（g²、2 乘、1 加）+ 权重衰减约 2（1 乘 1 减）+ 参数更新约 3–4（sqrt、乘、除、减）。总 ≈ **12P**（P 为参数量）。
 
 **(d)** 50% MFU、单卡 H100、400K steps、batch 1024 下 GPT-2 XL 训练时长。
-> 答：（小时数 + 简要推导）
+> 每 token 前向 ≈ 3.52 T / 1024 ≈ 3.43 GFLOPs；每步 1024×1024 token，前向 ≈ 3.60 PFLOPs；含反向（=2×前向）每步总 ≈ 3 × 3.60 ≈ 10.8 PFLOPs。50% MFU 有效吞吐 = 0.5 × 495 = 247.5 TFLOPS，每步 ≈ 10.8P / 247.5T ≈ 43.6 s。400K 步 ≈ 17.5 Ms ≈ **4850 小时（约 202 天）**。
 
 ## 4.4 Learning Rate Scheduling
 
